@@ -16,8 +16,7 @@ def sequence_mask(sequence_length, pos=True, max_len=None):
 
 class MaskedBCELoss(nn.Module):
     def __init__(self):
-        super(MaskedBCELoss, self).__init__(pos_weight=1)
-        self.criterion = nn.BCEWithLogitsLoss(reduction='none', pos_weight=pos_weight)
+        super(MaskedBCELoss, self).__init__()
 
     def forward(self, inputs, target, lengths=None, mask=None, max_len=None):
         if lengths is None and mask is None:
@@ -30,14 +29,14 @@ class MaskedBCELoss(nn.Module):
         # (B, C, T)
         mask_ = mask.expand_as(target)
         mask_.requires_grad = False
-        losses = self.criterion(inputs, target)
+        losses = nn.functional.binary_cross_entropy_with_logits(inputs, target, reduce=False, pos_weight=20)
         return ((losses * mask_).sum()) / mask_.sum()
 
 
 class MaskedMSELoss(nn.Module):
     def __init__(self):
         super(MaskedMSELoss, self).__init__()
-        self.criterion = nn.MSELoss(reduction='none')
+        self.criterion = nn.MSELoss(reduce=False)
 
     def forward(self, inputs, target, lengths=None, mask=None, max_len=None):
         if lengths is None and mask is None:
