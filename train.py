@@ -379,7 +379,7 @@ def main():
 
     # define loss function (criterion) and optimizer
     mels_criterion = MaskedMSELoss()
-    stop_criterion = MaskedBCELoss()
+    stop_criterion = MaskedBCELoss(pos_weight=hparams.cross_entropy_pos_weight)
 
     optimizer = torch.optim.Adam(model.get_trainable_parameters(), lr=hparams.init_learning_rate,
                                  betas=(hparams.adam_beta1, hparams.adam_beta2), eps=hparams.adam_epsilon,
@@ -464,7 +464,7 @@ def main():
                                                      batch_size=hparams.batch_size,
                                                      batch_group_size=hparams.batch_group_size,
                                                      permutate=hparams.permutate)
-            #train_sampler = None
+            train_sampler = None
             train_loader = DataLoader(train_dataset, collate_fn=collate_fn, batch_size=hparams.batch_size,
                                       sampler=train_sampler, num_workers=2, shuffle=False, pin_memory=True)
 
