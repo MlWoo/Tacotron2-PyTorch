@@ -1,0 +1,43 @@
+{
+    "audio_config": {
+        "sample_rate": 16000,
+        "n_fft": 2048,
+        "num_mels": 80,
+        "hop_time": 12.5,
+        "win_time": 50,
+        "fmin": 125,
+        "fmax": 7600,
+        "min_level_db": -100,
+        "ref_level_db": 20,
+        "seq_hop_freq": 5,
+        "rescaling_max": 0.9999,
+        "trim_silence_enable": 1,
+        "clip_mels_length_enable": 1,
+        "max_mel_frames": 900,
+        "trim_fft_size": 512,
+        "trim_hop_size": 128,
+        "trim_top_db": 60
+    },
+
+    "model_config": {
+      "builder": "Tacotron2"
+    },
+
+    "train_config": {
+        "output_directory": "checkpoints",
+        "start_epoch": 0,
+        "epochs": 1000000,
+        "learning_rate": 1e-4,
+        "weight_decay": 1e-4,
+        "iters_per_checkpoint": 1000,
+        "batch_size": 8,
+        "seed": 1234,
+        "checkpoint_path": ""
+    },
+
+    "dist_config": {
+        "dist_backend": "nccl",
+        "dist_url": "tcp://localhost:54321"
+    }
+
+}
