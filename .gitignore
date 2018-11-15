@@ -1,3 +1,6 @@
 __pycache__
 backup/*
 logs-*
+datasets/__pycache__
+model/__pycache__
+
