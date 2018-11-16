@@ -9,5 +9,5 @@ It aims to cooperate with the my single-Gaussian wavenet(including autoregressiv
 which are realized with PyTorch.
 
 ## Result
-The alignment at 20720 step with 32 batch size
-[![](/images/20720_alignment.png "The alignment at 20720 step with 32 batch size")][20720_alignment]
+The alignment at 20710 step with 32 batch size  
+[![](/images/20710_alignment.png "The alignment at 20710 step with 32 batch size")][20710_alignment]
