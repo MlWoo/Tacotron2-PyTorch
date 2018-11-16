@@ -10,4 +10,4 @@ which are realized with PyTorch.
 
 ## Result
 The alignment at 20710 step with 32 batch size  
-[![](/images/20710_alignment.png "The alignment at 20710 step with 32 batch size")][20710_alignment]
+![](/images/20710_alignment.png "The alignment at 20710 step with 32 batch size")
