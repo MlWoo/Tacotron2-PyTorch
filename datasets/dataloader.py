@@ -20,7 +20,6 @@ def _pad_1d(seq, max_len, constant_values=0):
 
 
 def _pad_2d(x, max_len, b_pad=0, constant_values=0):
-    #print("------", x)
     x = np.pad(x, [(b_pad, max_len - len(x) - b_pad), (0, 0)], mode="constant", constant_values=constant_values)
     return x
 
@@ -33,17 +32,17 @@ def text_to_seq(txt):
     return seq
 
 
-def get_item_list(data_root, file_name="train_no_space.txt"):
+def get_item_list(data_root, file_name="train.txt"):
     print(data_root)
     meta = os.path.join(data_root, file_name)
     with open(meta, "rb") as f:
         lines = f.readlines()
     l_ = lines[0].decode("utf-8").split("|")
-    assert len(l_) == 4 or len(l_) == 5
-    multi_speaker = len(l_) == 5
-    texts_list = list(map(lambda l: l.decode("utf-8").split("|")[3][:-1], lines))
+    assert len(l_) == 6 or len(l_) == 7
+    multi_speaker = len(l_) == 7
+    texts_list = list(map(lambda l: l.decode("utf-8").split("|")[5][:-1], lines))
     mels_list = list(map(lambda l: l.decode("utf-8").split("|")[1], lines))
-    mels_length_list = list(map(lambda l: int(l.decode("utf-8").split("|")[2]), lines))
+    mels_length_list = list(map(lambda l: int(l.decode("utf-8").split("|")[4]), lines))
     if multi_speaker:
         speaker_ids_list = list(map(lambda l: int(l.decode("utf-8").split("|")[-1]), lines))
     else:
@@ -61,7 +60,7 @@ class AudiobookDataset(Dataset):
 
     def __getitem__(self, index):
         text = self.text_ids[index]
-        mels = np.load(os.path.join(self.path, self.mels_ids[index]))
+        mels = np.load(os.path.join(self.path, 'mels', self.mels_ids[index]))
         if self.speaker_ids is not None:
             speaker = self.speaker_ids[index]
         else:

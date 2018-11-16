@@ -426,7 +426,7 @@ def main():
 
     # Prepare dataset
     dataset_dir = os.path.join(dirname(__file__), data_root)
-    texts_list, mels_list, mels_length_list, speaker_ids_list = get_item_list(dataset_dir, "train_no_space.txt")
+    texts_list, mels_list, mels_length_list, speaker_ids_list = get_item_list(dataset_dir, "train.txt")
 
     #indices = np.arange(256*16)
     indices = np.arange(len(texts_list) - len(texts_list) % hparams.batch_size)

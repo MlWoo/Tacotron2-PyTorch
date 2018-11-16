@@ -3,4 +3,5 @@ backup/*
 logs-*
 datasets/__pycache__
 model/__pycache__
+dataset_mandarin/
 

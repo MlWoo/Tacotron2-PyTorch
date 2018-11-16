@@ -22,7 +22,6 @@ hparams = tf.contrib.training.HParams(
 
     ####################################################################################################################
 
-
     #Audio
     num_mels = 80, #Number of mel-spectrogram channels and local conditioning dimensionality
     num_freq = 513, # (= n_fft / 2 + 1) only used when adding linear spectrograms post processing network
@@ -62,7 +61,12 @@ hparams = tf.contrib.training.HParams(
     ref_level_db = 20,
     fmin = 125, #Set this to 75 if your speaker is male! if female, 125 should help taking off noise. (To test depending on dataset)
     fmax = 7600,
+    #Contribution by @begeekmyfriend
+    #Spectrogram Pre-Emphasis (Lfilter: Reduce spectrogram noise and helps model certitude levels. Also allows for better G&L phase reconstruction)
+    preemphasize = True, #whether to apply filter                                                                                                                                                             
+    preemphasis = 0.97, #filter coefficient.
 
+    ##############################################################################################################################
 
     #Tacotron
     frames_per_step = 2, #number of frames to generate at each decoding step (speeds up computation and allows for higher batch size)
