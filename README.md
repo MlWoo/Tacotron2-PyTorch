@@ -8,6 +8,16 @@ I decide to rewrite the Tacotron 2 although (Rayhane-mamah)[https://github.com/R
 It aims to cooperate with the my single-Gaussian wavenet(including autoregressive wavenet and parallel wavenet) and waveglow
 which are realized with PyTorch.
 
+## Data preprocess  
+Data preprocessing is borrowed from the (Tacotron-2)[https://github.com/Rayhane-mamah/Tacotron-2] implemented with Tensorflow. It is adapted slightly to meet the requirements of my self-made mandarin datasets. You should specific the index txt and output directory like the script I provides.
+```bash
+#!/bin/bash
+python preprocess.py --dataset=mandarin \
+                     --input_txt='metadata.csv' \
+	             --base_dir=./ \
+		     --output_dir='dataset_mandarin'
+```
+
 ## Result
 The alignment at 20710 step with 32 batch size  
 ![](/images/20710_alignment.png "The alignment at 20710 step with 32 batch size")
