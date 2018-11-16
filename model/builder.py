@@ -16,7 +16,8 @@ def Tacotron2(num_chars=32,
               num_location_features=32,
               gate_threshold=0.5,
               dec_num_filters=512,
-              dec_kernel_size=5
+              dec_kernel_size=5,
+              batch_size=32
               ):
     from model.tacotron2 import Tacotron2Net
 
@@ -25,6 +26,6 @@ def Tacotron2(num_chars=32,
                          num_mels=num_mels, dim_attention=dim_attention, dim_decoder=dim_decoder, dim_prenet=dim_prenet,
                          num_layers=num_layers, num_location_features=num_location_features,
                          gate_threshold=gate_threshold, dec_num_filters=dec_num_filters,
-                         dec_kernel_size=dec_kernel_size)
+                         dec_kernel_size=dec_kernel_size, batch_size=32)
 
     return model

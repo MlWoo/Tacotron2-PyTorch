@@ -2,11 +2,10 @@ import torch.nn.functional as F
 from torch import nn
 import torch
 
-import pdb
 
 class LocationAttention(nn.Module):
     def __init__(self, dim_key, dim_query, dim_attention, num_location_features, attention_kernel_size=31,
-                 smoothing=True, cumulate=True):
+                 smoothing=True, accumulate=True):
         super(LocationAttention, self).__init__()
 
         self.W = nn.Linear(in_features=dim_query, out_features=dim_attention)
@@ -17,14 +16,17 @@ class LocationAttention(nn.Module):
         self.w = nn.Linear(in_features=dim_attention, out_features=1, bias=False)
         self.score_mask_value = -float('inf')
         self.smoothing = smoothing
-        self.cumulate = cumulate
+        self.accumulate = accumulate
+        self.memory = None
+        self.key_attention = None
+        self.mask = None
 
     def init_state(self, memory, mask):
         """
         memory: T x B x Ck
         """
         self.memory = memory.permute(1, 0, 2).contiguous()  # [B x T x Ck]
-        self.key_attention = self.V(self.memory) # [B x T x Ca]
+        self.key_attention = self.V(self.memory)            # [B x T x Ca]
         self.mask = mask.unsqueeze(dim=2)
 
     def score(self, query, probability):
@@ -34,10 +36,10 @@ class LocationAttention(nn.Module):
         :param probability: probability [B x 1 x T]
         :return:
         """
-        query_attention = self.W(query).permute(1, 0, 2) # [B x 1 x Ca]
-        location_value = self.conv_f(probability)  # [B x Cl x T]
-        location_value = location_value.permute(0, 2, 1)  # [B x T x Cl]
-        location_attention = self.U(location_value)  # [B x T x Ca]
+        query_attention = self.W(query).permute(1, 0, 2)    # [B x 1 x Ca]
+        location_value = self.conv_f(probability)           # [B x Cl x T]
+        location_value = location_value.permute(0, 2, 1)    # [B x T x Cl]
+        location_attention = self.U(location_value)         # [B x T x Ca]
         return self.w(torch.tanh(self.key_attention + location_attention + query_attention))  # [B x T x 1]
 
     def softmax_smoothing(self, energies, dim=0):
@@ -59,9 +61,9 @@ class LocationAttention(nn.Module):
         else:
             probability = torch.nn.functional.softmax(energies, dim=1)  # [B x T x 1]
 
-        probability = probability.permute(0, 2, 1) # [B x 1 x T]
+        probability = probability.permute(0, 2, 1)  # [B x 1 x T]
 
-        if self.cumulate:
+        if self.accumulate:
             next_state = probability + state  # [B x T]
         else:
             next_state = probability

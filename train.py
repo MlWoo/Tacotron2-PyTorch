@@ -61,7 +61,7 @@ global best_loss
 global global_epoch
 global global_step
 
-torch.backends.cudnn.enabled = True
+torch.backends.cudnn.enabled = False
 
 def train(train_loader, model, device, mels_criterion, stop_criterion, optimizer, scheduler, writer, train_dir):
     batch_time = ValueWindow()
@@ -266,7 +266,6 @@ def load_checkpoint(path, model, device, optimizer, reset_optimizer):
 
 def build_model():
     num_chars = len(_ch_symbol_to_id) + 1
-    print("---------", num_chars)
     model = getattr(builder, hparams.builder)(
         num_chars=num_chars,
         max_decoder_steps=hparams.max_decoder_steps,
@@ -282,7 +281,8 @@ def build_model():
         num_location_features=hparams.num_location_features,
         gate_threshold=hparams.gate_threshold,
         dec_num_filters=hparams.dec_num_filters,
-        dec_kernel_size=hparams.dec_kernel_size
+        dec_kernel_size=hparams.dec_kernel_size,
+        batch_size=hparams.batch_size
     )
     return model
 
@@ -464,7 +464,8 @@ def main():
                                                      batch_size=hparams.batch_size,
                                                      batch_group_size=hparams.batch_group_size,
                                                      permutate=hparams.permutate)
-            #train_sampler = None
+            train_sampler = None
+            shuffle = (train_sampler == None)
             train_loader = DataLoader(train_dataset, collate_fn=collate_fn, batch_size=hparams.batch_size,
                                       sampler=train_sampler, num_workers=2, shuffle=False, pin_memory=True)
 

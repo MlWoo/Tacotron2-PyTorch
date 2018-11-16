@@ -23,14 +23,16 @@ class ConvBlock(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, num_chars, dim_embedding=512, dim_encoder=256, kernel_size=5):
+    def __init__(self, num_chars, dim_embedding=512, dim_encoder=256, kernel_size=5, batch_size=32):
         super(Encoder, self).__init__()
         self.char_embedding = nn.Embedding(num_embeddings=num_chars, embedding_dim=dim_embedding, padding_idx=0)
         self.conv1 = ConvBlock(in_channels=dim_embedding, out_channels=dim_embedding, kernel_size=kernel_size)
         self.conv2 = ConvBlock(in_channels=dim_embedding, out_channels=dim_embedding, kernel_size=kernel_size)
         self.conv3 = ConvBlock(in_channels=dim_embedding, out_channels=dim_embedding, kernel_size=kernel_size)
         self.birnn = nn.LSTM(input_size=dim_embedding, hidden_size=dim_encoder, bidirectional=True, dropout=0.1)
-        self.birnn.flatten_parameters()
+        self.birnn_h0 = nn.Parameter(torch.randn(2, batch_size, dim_encoder), requires_grad=True)
+        self.birnn_c0 = nn.Parameter(torch.randn(2, batch_size, dim_encoder), requires_grad=True)
+        #self.birnn.flatten_parameters()
         #self.birnn = ZoneoutLSTMEncoder(input_size=dim_embedding, hidden_size=dim_encoder, zoneout_factor_cell=0.1,
         #                                zoneout_factor_hidden=0.1, bidirectional=True)
 
@@ -42,7 +44,7 @@ class Encoder(nn.Module):
         x = self.conv2(x)
         x = self.conv3(x)
         x = x.permute(2, 0, 1)  # swap seq, batch, dim for rnn
-        x, _ = self.birnn(x)    # 256 dims in either direction
+        x, _ = self.birnn(x, (self.birnn_h0, self.birnn_c0))    # 256 dims in either direction
         return x  # T x B x C
 
 
@@ -120,7 +122,7 @@ class PostNet(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, max_decoder_steps, frames_per_step=1, dim_encoder=256, num_mels=80, dim_attention=128,
                  dim_decoder=1024, dim_prenet=256, num_layers=2, num_location_features=32, gate_threshold=0.5,
-                 num_filters=512, kernel_size=5):
+                 num_filters=512, kernel_size=5, batch_size=32):
         super(Decoder, self).__init__()
         self.num_mels = num_mels
         self.frames_per_step = frames_per_step
@@ -141,66 +143,56 @@ class Decoder(nn.Module):
         self.mels_proj = nn.Linear(in_features=dim_decoder+dim_encoder, out_features=num_mels)
         self.stop_proj = nn.Linear(in_features=dim_decoder+dim_encoder, out_features=1)
         self.postnet = PostNet(num_mels=num_mels, num_filters=num_filters, kernel_size=kernel_size)
+        self.decoder_output = nn.Parameter(torch.zeros(1, batch_size, num_mels))
+        self.context = nn.Parameter(torch.zeros(1, batch_size, dim_encoder))
+        self.decoder_hidden_state = nn.Parameter(torch.zeros(self.num_layers, batch_size, self.dim_decoder))
+        self.decoder_cell_state = nn.Parameter(torch.zeros(self.num_layers, batch_size, self.dim_decoder))
+        self.decoder_state = (self.decoder_hidden_state, self.decoder_cell_state)
 
     def init_decoder_output(self, batch_size):
         return torch.zeros([1, batch_size, self.num_mels]).cuda()
 
-    def init_decoder_state(self, batch_size):
-        hidden_state_list = []
-        cell_state_list = []
-        for i in range(self.num_layers):
-            hidden_state = torch.zeros((batch_size, self.dim_decoder)).cuda()
-            cell_state = torch.zeros((batch_size, self.dim_decoder)).cuda()
-            hidden_state_list.append(hidden_state)
-            cell_state_list.append(cell_state)
-
-        return hidden_state_list, cell_state_list
 
     def init_cum_alignment(self, batch_size, seq_len):
         return torch.zeros(batch_size, 1, seq_len).cuda()
 
-
-    def init_hidden(self, batch_size):
-        return (nn.Parameter(torch.zeros(self.num_layers, batch_size, self.dim_decoder)).cuda(),
-                nn.Parameter(torch.zeros(self.num_layers, batch_size, self.dim_decoder)).cuda())
-
     def init_context(self, step, batch_size, dim_memory):
         return torch.zeros(step, batch_size, dim_memory).cuda()
 
-    def forward(self, encoder_output, txt_lengths, decoder_input, is_training=True):
+    def forward(self, encoder_output, txt_lengths, mels, is_training=True):
         """
         :param encoder_output:
-        :param decoder_input: # B x C x T
-        :param memory_length:
+        :param txt_lengths: also called memory length
+        :param mels:
+        :param is_training:
         :return:
         """
         if is_training:
-            assert decoder_input is not None
-            batch_size, _, seq_len =  decoder_input.size()
+            assert mels is not None
+            batch_size, _, seq_len =  mels.size()
         else:
             _, batch_size, _ = encoder_output.size()
             assert batch_size == 1
             seq_len = self.max_decoder_steps
 
-        decoder_output_step = self.init_decoder_output(batch_size)
-        decoder_state = self.init_hidden(batch_size)
-        #decoder_state = self.init_decoder_state(batch_size)
         seq_len_enc, _, dim_encoder = encoder_output.size()
         cum_alignment = self.init_cum_alignment(batch_size, seq_len_enc)
         mask_neg = ~sequence_mask(txt_lengths)
         mask_neg.requires_grad = False
+        self.attention.init_state(encoder_output, mask_neg)
 
         mels_frame_list = []
         stop_token_list = []
         alignment_list = []
         decoder_frame_list = []
-        self.attention.init_state(encoder_output, mask_neg)
-        context_tbc = self.init_context(1, batch_size, dim_encoder)
+        context_tbc = self.context
+        decoder_output = self.decoder_output
+        decoder_state = self.decoder_state
 
         for t in range(seq_len):
-            prev_output = self.prenet(decoder_output_step) # (1) x B x C(256)
-            lstm_input = torch.cat([prev_output, context_tbc], dim=2)  # T(1) x B x C(768)
-            lstm_out, decoder_state = self.lstm(lstm_input, decoder_state) # T x B x C(1024)
+            prev_output = self.prenet(decoder_output)                         # (1) x B x C(256)
+            lstm_input = torch.cat([prev_output, context_tbc], dim=2)         # T(1) x B x C(768)
+            lstm_out, decoder_state = self.lstm(lstm_input, decoder_state)    # T x B x C(1024)
             context_tbc, alignment, cum_alignment = self.attention(lstm_out, cum_alignment)
             project_input = torch.cat([lstm_out, context_tbc], dim=2)
             decoder_output = self.mels_proj(project_input)  # T(1) x B x C
@@ -210,9 +202,7 @@ class Decoder(nn.Module):
             alignment_list.append(alignment)
 
             if is_training:
-                decoder_output_step = decoder_input[:, :, t].unsqueeze(0)
-            else:
-                decoder_output_step = decoder_output
+                decoder_output = mels[:, :, t].unsqueeze(0)
 
             if not is_training and torch.sigmoid(stop_token[0, 0]) > self.gate_threshold:
                 break
@@ -233,22 +223,21 @@ class Tacotron2Net(nn.Module):
 
     def __init__(self, num_chars, max_decoder_steps, frames_per_step=1, dim_embedding=512, dim_encoder=256,
                  enc_kernel_size=5, num_mels=80, dim_attention=128, dim_decoder=1024, dim_prenet=256, num_layers=2,
-                 num_location_features=32, gate_threshold=0.5, dec_num_filters=512, dec_kernel_size=5):
+                 num_location_features=32, gate_threshold=0.5, dec_num_filters=512, dec_kernel_size=5, batch_size=32):
         super(Tacotron2Net, self).__init__()
         self.encoder = Encoder(num_chars=num_chars, dim_embedding=dim_embedding, dim_encoder=dim_encoder,
-                               kernel_size=enc_kernel_size)
+                               kernel_size=enc_kernel_size, batch_size=batch_size)
         self.decoder = Decoder(max_decoder_steps=max_decoder_steps, frames_per_step=frames_per_step,
                                dim_encoder=dim_encoder*2, num_mels=num_mels, dim_attention=dim_attention,
                                dim_decoder=dim_decoder, dim_prenet=dim_prenet, num_layers=num_layers,
                                num_location_features=num_location_features, gate_threshold=gate_threshold,
-                               num_filters=dec_num_filters, kernel_size=dec_kernel_size)
+                               num_filters=dec_num_filters, kernel_size=dec_kernel_size, batch_size=batch_size)
 
     def get_trainable_parameters(self):
         return self.parameters()
 
-
     def forward(self, text, txt_lengths, mels=None):
         is_training = False if mels is None else True
         encoder_output = self.encoder(text)
-        frames, decoder_frames, stop_tokens, alignment = self.decoder(encoder_output, txt_lengths, decoder_input=mels, is_training=is_training)
+        frames, decoder_frames, stop_tokens, alignment = self.decoder(encoder_output, txt_lengths, mels=mels, is_training=is_training)
         return frames, decoder_frames, stop_tokens, alignment
