@@ -1,64 +1,48 @@
-import pickle
-import glob
-from utils import *
-from audio import *
+import os 
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
+
 import numpy as np
-import os
+from datasets import audio
+from wavenet_vocoder.util import is_mulaw, is_mulaw_quantize, mulaw, mulaw_quantize
 
-def build_from_path(in_dir, out_dir, num_workers=1, tqdm=lambda x: x):
-    '''Preprocesses the LJ Speech dataset from a given input path into a given output directory.
 
-      Args:
-        in_dir: The directory where you have downloaded the LJ Speech dataset
-        out_dir: The directory to write the output into
-        num_workers: Optional number of worker processes to parallelize across
-        tqdm: You can optionally pass tqdm to get a nice progress bar
+def build_from_path(hparams, input_dirs, mel_dir, linear_dir, wav_dir, n_jobs=12, tqdm=lambda x: x):
+    """
+    Preprocesses the speech dataset from a gven input path to given output directories
 
-      Returns:
-        A list of tuples describing the training examples. This should be written to train.txt
-    '''
+    Args:
+        - hparams: hyper parameters
+        - input_dir: input directory that contains the files to prerocess
+        - mel_dir: output directory of the preprocessed speech mel-spectrogram dataset
+        - linear_dir: output directory of the preprocessed speech linear-spectrogram dataset
+        - wav_dir: output directory of the preprocessed speech audio dataset
+        - n_jobs: Optional, number of worker process to parallelize across
+        - tqdm: Optional, provides a nice progress bar
 
-    # We use ProcessPoolExecutor to parallize across processes. This is just an optimization and you
-    # can omit it and just call _process_utterance on each input if you want.
-    executor = ProcessPoolExecutor(max_workers=num_workers)
+    Returns:
+        - A list of tuple describing the train examples. this should be written to train.txt
+    """
+
+    # We use ProcessPoolExecutor to parallelize across processes, this is just for
+    # optimization purposes and it can be omited
+    executor = ProcessPoolExecutor(max_workers=n_jobs)
     futures = []
     index = 1
-    with open(os.path.join(in_dir, 'metadata.csv'), encoding='utf-8') as f:
-        for line in f:
-            parts = line.strip().split('|')
-            wav_path = os.path.join(in_dir, 'wavs', '%s.wav' % parts[0])
-            text = parts[2]
-            if len(text) < hparams.min_text:
-                continue
-            futures.append(executor.submit(partial(_process_utterance, out_dir, index, wav_path, text)))
-            index += 1
-    return [future.result() for future in tqdm(futures)]
+    for input_dir in input_dirs:
+        with open(os.path.join(input_dir, 'metadata.csv'), encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                basename = parts[0]
+                wav_path = os.path.join(input_dir, 'wavs', '{}.wav'.format(basename))
+                text = parts[2]
+                futures.append(executor.submit(partial(_process_utterance, mel_dir, linear_dir, wav_dir, basename, wav_path, text, hparams)))
+                index += 1
+
+    return [future.result() for future in tqdm(futures) if future.result() is not None]
 
 
-def preprocess_data(wav_files, output_path, mel_path, quant_path, audio_config):
-    # This will take a while depending on size of dataset
-    dataset_ids = []
-    for i, path in enumerate(wav_files):
-        id_ = path.split('/')[-1][:-4]
-        dataset_ids += [id_]
-        rtn = True
-        rst = process_utterance(path, audio_config)
-        if rst is not None:
-            m, x = rst
-        else:
-            rtn = False
-
-        if rtn is not None:
-            np.save(f'{mel_path}/{id_}.npy', m)
-            np.save(f'{quant_path}/{id_}.npy', x)
-            display('%i/%i', (i + 1, len(wav_files)))
-
-    with open(output_path + 'dataset_ids.pkl', 'wb') as f:
-        pickle.dump(dataset_ids, f)
-
-def process_utterance(path, audio_config):
+def _process_utterance(mel_dir, linear_dir, wav_dir, index, wav_path, text, hparams):
     """
     Preprocesses a single utterance wav/text pair
 
@@ -66,63 +50,101 @@ def process_utterance(path, audio_config):
     to the train.txt file
 
     Args:
-    :param path:
-    :param audio_config:
-    :return:
+        - mel_dir: the directory to write the mel spectograms into
+        - linear_dir: the directory to write the linear spectrograms into
+        - wav_dir: the directory to write the preprocessed wav into
+        - index: the numeric index to use in the spectogram filename
+        - wav_path: path to the audio file containing the speech input
+        - text: text spoken in the input audio file
+        - hparams: hyper parameters
+    Returns:
+        - A tuple: (audio_filename, mel_filename, linear_filename, time_steps, mel_frames, linear_frames, text)
     """
     try:
         # Load the audio as numpy array
-        wav = load_wav(path, sample_rate=audio_config.sample_rate, encode=False)
-    except FileNotFoundError:  # catch missing wav exception
-        print('file {} present in csv metadata is not present in wav folder. skipping!'.format(path))
+        wav = audio.load_wav(wav_path, sr=hparams.sample_rate)
+    except FileNotFoundError: #catch missing wav exception
+        print('file {} present in csv metadata is not present in wav folder. skipping!'.format(
+            wav_path))
         return None
 
-    wav = wav / np.abs(wav).max() * audio_config.rescaling_max
+    #rescale wav
+    if hparams.rescale:
+        wav = wav / np.abs(wav).max() * hparams.rescaling_max
 
-    # M-AILABS extra silence specific
-    if audio_config.trim_silence_enable:
-        wav = trim_silence(wav, audio_config.trim_top_db, audio_config.trim_fft_size, audio_config.trim_hop_size)
+    #M-AILABS extra silence specific
+    if hparams.trim_silence:
+        wav = audio.trim_silence(wav, hparams)
 
-    quant_scale = 2 ** audio_config.bits
-    quant = linear_quantize(wav, quant_scale)
-    quant = quant.astype(np.int)
-    out = quant
-    constant_values = int(linear_quantize(0, quant_scale))
+    #Mu-law quantize
+    if is_mulaw_quantize(hparams.input_type):
+        #[0, quantize_channels)
+        out = mulaw_quantize(wav, hparams.quantize_channels)
 
-    hop_length = int(audio_config.sample_rate * audio_config.hop_time / 1000)
-    win_length = int(audio_config.sample_rate * audio_config.win_time / 1000)
+        #Trim silences
+        start, end = audio.start_and_end_indices(out, hparams.silence_threshold)
+        wav = wav[start: end]
+        out = out[start: end]
+
+        constant_values = mulaw_quantize(0, hparams.quantize_channels)
+        out_dtype = np.int16
+
+    elif is_mulaw(hparams.input_type):
+        #[-1, 1]
+        out = mulaw(wav, hparams.quantize_channels)
+        constant_values = mulaw(0., hparams.quantize_channels)
+        out_dtype = np.float32
+
+    else:
+        #[-1, 1]
+        out = wav
+        constant_values = 0.
+        out_dtype = np.float32
 
     # Compute the mel scale spectrogram from the wav
-    mel_spectrogram = melspectrogram(wav, sample_rate=audio_config.sample_rate, n_fft=audio_config.n_fft,
-                                     hop_length=hop_length, win_length=win_length, num_mels=audio_config.num_mels,
-                                     fmin=audio_config.fmin, min_level_db=audio_config.min_level_db).astype(np.float32)
-
+    mel_spectrogram = audio.melspectrogram(wav, hparams).astype(np.float32)
     mel_frames = mel_spectrogram.shape[1]
 
-    if mel_frames > audio_config.max_mel_frames and audio_config.clip_mels_length_enable:
+    if mel_frames > hparams.max_mel_frames and hparams.clip_mels_length:
         return None
 
-    # Ensure time resolution adjustement between audio and mel-spectrogram
-    fft_size = win_length
-    l, r = pad_lr(wav, fft_size, hop_length)
+    #Compute the linear scale spectrogram from the wav
+    linear_spectrogram = audio.linearspectrogram(wav, hparams).astype(np.float32)
+    linear_frames = linear_spectrogram.shape[1]
 
-    # Zero pad for quantized signal
-    out_l = np.pad(out, (l, r), mode='constant', constant_values=constant_values)
-    assert len(out_l) >= mel_frames * hop_length
+    #sanity check
+    assert linear_frames == mel_frames
 
-    # time resolution adjustement
-    # ensure length of raw audio is multiple of hop size so that we can use
-    # transposed convolution to upsample
-    out = out_l[:mel_frames * hop_length]
-    assert len(out) % hop_length == 0
+    if hparams.use_lws:
+        #Ensure time resolution adjustement between audio and mel-spectrogram
+        fft_size = hparams.n_fft if hparams.win_size is None else hparams.win_size
+        l, r = audio.pad_lr(wav, fft_size, audio.get_hop_size(hparams))
+
+        #Zero pad audio signal
+        out = np.pad(out, (l, r), mode='constant', constant_values=constant_values)
+    else:
+        #Ensure time resolution adjustement between audio and mel-spectrogram
+        pad = audio.librosa_pad_lr(wav, hparams.n_fft, audio.get_hop_size(hparams))
+
+        #Reflect pad audio signal (Just like it's done in Librosa to avoid frame inconsistency)
+        out = np.pad(out, pad, mode='reflect')
+
+    assert len(out) >= mel_frames * audio.get_hop_size(hparams)
+
+    #time resolution adjustement
+    #ensure length of raw audio is multiple of hop size so that we can use
+    #transposed convolution to upsample
+    out = out[:mel_frames * audio.get_hop_size(hparams)]
+    assert len(out) % audio.get_hop_size(hparams) == 0
+    time_steps = len(out)
+
+    # Write the spectrogram and audio to disk
+    audio_filename = 'audio-{}.npy'.format(index)
+    mel_filename = 'mel-{}.npy'.format(index)
+    linear_filename = 'linear-{}.npy'.format(index)
+    np.save(os.path.join(wav_dir, audio_filename), out.astype(out_dtype), allow_pickle=False)
+    np.save(os.path.join(mel_dir, mel_filename), mel_spectrogram.T, allow_pickle=False)
+    np.save(os.path.join(linear_dir, linear_filename), linear_spectrogram.T, allow_pickle=False)
 
     # Return a tuple describing this training example
-    return mel_spectrogram, out
-
-
-def get_files(path, extension='.wav'):
-    filenames = []
-    for filename in glob.iglob(f'{path}/**/*{extension}', recursive=True):
-        filenames += [filename]
-    return filenames
-
+    return (audio_filename, mel_filename, linear_filename, time_steps, mel_frames, text)
